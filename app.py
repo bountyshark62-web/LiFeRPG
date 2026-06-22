@@ -1,12 +1,24 @@
 # app.py
 import streamlit as st
 import json
+import random
+from supabase import create_client, Client
 from hero import Hero
 
-# Конфигурация мобильного интерфейса сайта
+# --- НАСТРОЙКА БАЗЫ ДАННЫХ SUPABASE ---
+SUPABASE_URL = "https://supabase.co"
+SUPABASE_KEY = "sb_publishable_lhFtEl3aWOxrovhgVjYqYA_L2Sx5DEW"
+
+# Инициализируем подключение к базе данных
+@st.cache_resource
+def get_supabase_client() -> Client:
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
+
+supabase = get_supabase_client()
+
+# --- Конфигурация мобильного интерфейса сайта ---
 st.set_page_config(page_title="Моя Реальная Жизнь RPG", page_icon="🎮", layout="centered")
 
-# Кастомный CSS для тёмной темы, красивых карточек и кнопок как в оригинале
 st.markdown("""
 <style>
     .stApp { background-color: #191923; color: #F0F0FA; }
@@ -18,51 +30,85 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Инициализация персонажа в сессии конкретного пользователя браузера
-if "player" not in st.session_state:
-    player = Hero()
+# Перемешиваем генератор случайных чисел для уникальности квестов
+random.seed()
+
+# --- СИСТЕМА ЛОГИНА / АВТОРИЗАЦИИ ---
+if "user_name" not in st.session_state:
+    st.markdown("<h2 style='text-align: center; color: #F1C40F;'>🎮 ВХОД В LIFE RPG</h2>", unsafe_allow_html=True)
+    username = st.text_input("Введите ваше имя (никнейм) для сохранения прогресса:", "").strip()
     
-    # Пытаемся достать старые личные сохранения из локальной памяти браузера
-    if "saved_rpg_data" in st.query_params:
-        try:
-            js_data = json.loads(st.query_params["saved_rpg_data"])
-            with open("save_data.json", "w", encoding="utf-8") as f:
-                json.dump(js_data, f, ensure_ascii=False)
-            player.load_from_file()
-        except:
-            player.load_from_file()
-    else:
-        player.load_from_file()
-        
-    st.session_state.player = player
+    if st.button("ВОЙТИ В ИГРУ", type="primary", use_container_width=True):
+        if username:
+            st.session_state.user_name = username
+            
+            # Проверяем, есть ли игрок в облачной базе данных
+            response = supabase.table("players").select("*").eq("username", username).execute()
+            player = Hero()
+            player.name = username
+            
+            if response.data:
+                # Если игрок найден, загружаем его данные из базы
+                db_data = response.data[0]
+                player.level = db_data.get("level", 1)
+                player.xp = db_data.get("xp", 0)
+                player.xp_to_next_level = db_data.get("xp_to_next_level", 100)
+                player.gold = db_data.get("gold", 50)
+                player.hp = db_data.get("hp", 100)
+                player.skills = db_data.get("skills", {"strength": 0, "wisdom": 0, "order": 0})
+                player.age_group = db_data.get("age_group", "adult")
+                player.body_color_idx = db_data.get("body_idx", 0)
+                player.hair_style_idx = db_data.get("hair_idx", 0)
+                player.shirt_idx = db_data.get("shirt_idx", 0)
+                player.daily_quests = db_data.get("daily_quests", [])
+                player.completed_today = db_data.get("completed_today", [])
+                player.boss_hp = db_data.get("boss_hp", 300)
+                player.inventory = db_data.get("inventory", {"Куртка": 0, "Роба мага": 0, "Броня": 0})
+                
+                st.session_state.game_state = "gamehub"
+            else:
+                # Если новый игрок, отправляем на экран создания
+                st.session_state.game_state = "creation"
+                
+            st.session_state.player = player
+            st.rerun()
+        else:
+            st.error("Имя не может быть пустым!")
+    st.stop()
 
 player = st.session_state.player
 
-# Управляем экранами игры
-if "game_state" not in st.session_state:
-    st.session_state.game_state = "gamehub" if player.daily_quests else "creation"
-
-def save_and_sync():
-    """Сохраняет прогресс и выводит ссылку для сохранения в закладки телефона"""
-    player.save_to_file()
-    try:
-        with open("save_data.json", "r", encoding="utf-8") as f:
-            current_save = json.load(f)
-        # Кодируем сохранение прямо в URL-адрес страницы
-        st.query_params["saved_rpg_data"] = json.dumps(current_save, ensure_ascii=False)
-    except:
-        pass
+def save_to_database():
+    """Автоматически отправляет все данные текущего игрока в облачную базу данных"""
+    data_to_save = {
+        "username": player.name,
+        "level": player.level,
+        "xp": player.xp,
+        "xp_to_next_level": player.xp_to_next_level,
+        "gold": player.gold,
+        "hp": player.hp,
+        "skills": player.skills,
+        "age_group": player.age_group,
+        "body_idx": player.body_color_idx,
+        "hair_idx": player.hair_style_idx,
+        "shirt_idx": player.shirt_idx,
+        "daily_quests": player.daily_quests,
+        "completed_today": player.completed_today,
+        "boss_hp": player.boss_hp,
+        "inventory": player.inventory
+    }
+    # Команда upsert обновляет строку, если имя совпадает, или создает новую, если игрока еще нет
+    supabase.table("players").upsert(data_to_save, on_conflict="username").execute()
 
 # ==========================================
-# 🧙‍♂️ ЭКРАН 1: СОЗДАНИЕ ПЕРСОНАЖА
+# ЭКРАН 1: СОЗДАНИЕ ПЕРСОНАЖА
 # ==========================================
 if st.session_state.game_state == "creation":
-    st.markdown("<h2 style='text-align: center; color: #27AE60;'>СОЗДАНИЕ ПЕРСОНАЖА</h2>", unsafe_allow_html=True)
+    st.markdown(f"<h2 style='text-align: center; color: #27AE60;'>ПРИВЕТ, {player.name.upper()}!</h2>", unsafe_allow_html=True)
+    st.markdown("<h3 style='text-align: center; color: #F0F0FA;'>СОЗДАНИЕ ПЕРСОНАЖА</h3>", unsafe_allow_html=True)
     
-    # Визуальный аватар в вебе (текстовый аналог пиксель-арта)
     st.markdown(f"""
     <div style='text-align: center; font-size: 18px; background: #232332; padding: 20px; border-radius: 10px; margin-bottom: 20px;'>
-        👤 <b>Текущий облик героя:</b><br><br>
         🎭 Кожа: <span style='color: #F1C40F;'>{player.body_colors[player.body_color_idx]}</span><br>
         🦱 Волосы: <span style='color: #F1C40F;'>{player.hair_styles[player.hair_style_idx]}</span><br>
         👕 Одежда: <span style='color: #F1C40F;'>{player.shirts[player.shirt_idx]}</span>
@@ -71,7 +117,7 @@ if st.session_state.game_state == "creation":
     
     c1, c2, c3 = st.columns(3)
     with c1:
-        if st.button("🎭 ИЗМ. КОЖУ", use_container_width=True):
+        if st.button("🎭 КОЖА", use_container_width=True):
             player.next_body()
             st.rerun()
     with c2:
@@ -83,46 +129,38 @@ if st.session_state.game_state == "creation":
             player.next_shirt()
             st.rerun()
             
-    st.markdown("<br>", unsafe_allow_html=True)
     if st.button("👦 ВЫБРАТЬ: ПОДРОСТКИ", use_container_width=True):
         player.age_group = "teen"
-        st.toast("Возрастная группа изменена на: Подростки!")
+        st.toast("Выбрана группа: Подростки")
         
-    st.markdown("<br><br>", unsafe_allow_html=True)
     if st.button("🟢 НАЧАТЬ ИГРУ", type="primary", use_container_width=True):
         player.generate_5_quests()
-        save_and_sync()
+        save_to_database()
         st.session_state.game_state = "gamehub"
         st.rerun()
 
 # ==========================================
-# 🎮 ЭКРАН 2: ИГРОВОЙ ХАБ
+# ЭКРАН 2: ИГРОВОЙ ХАБ
 # ==========================================
 elif st.session_state.game_state == "gamehub":
-    # Верхняя статус-панель
+    st.markdown(f"<h5 style='color: #888;'>Игрок: {player.name}</h5>", unsafe_allow_html=True)
     c_stat1, c_stat2 = st.columns(2)
     with c_stat1:
         st.metric(label="🏆 УРОВЕНЬ", value=player.level, delta=f"ОПЫТ: {player.xp} / {player.xp_to_next_level}")
     with c_stat2:
         st.metric(label="🪙 ЗОЛОТО", value=f"{player.gold} G", delta=f"❤️ ЗДОРОВЬЕ: {player.hp}", delta_color="inverse")
         
-    # Навигационные мобильные кнопки
     c_nav1, c_nav2 = st.columns(2)
     with c_nav1:
         if st.button("🛍️ МАГАЗИН", type="primary", use_container_width=True):
             st.session_state.game_state = "shop"
             st.rerun()
     with c_nav2:
-        if st.button("🔴 СБРОС", use_container_width=True):
-            st.session_state.player = Hero()
-            st.session_state.player.save_to_file()
-            st.query_params.clear()
-            st.session_state.game_state = "creation"
+        if st.button("🚪 ВЫЙТИ", use_container_width=True):
+            del st.session_state.user_name
             st.rerun()
             
     st.markdown("<hr style='margin: 15px 0; border-color: #333;'>", unsafe_allow_html=True)
-    
-    # Характеристики персонажа и Босс
     st.markdown("<h4 style='color: #27AE60; margin-bottom: 5px;'>[ ХАРАКТЕРИСТИКИ ]</h4>", unsafe_allow_html=True)
     st.markdown(f"💪 **СИЛА:** {player.skills.get('strength', 0)} | 🧠 **РАЗУМ:** {player.skills.get('wisdom', 0)}")
     
@@ -133,10 +171,6 @@ elif st.session_state.game_state == "gamehub":
     st.markdown("<hr style='margin: 15px 0; border-color: #333;'>", unsafe_allow_html=True)
     st.markdown("<h3 style='color: #F1C40F;'>[ КВЕСТЫ НА СЕГОДНЯ ]</h3>", unsafe_allow_html=True)
     
-    # Вывод карточек квестов
-    if not player.daily_quests:
-        st.write("Квесты отсутствуют. Нажмите кнопку Сброс для создания.")
-        
     for q in player.daily_quests:
         done = q["id"] in player.completed_today
         box_class = "quest-box-done" if done else "quest-box"
@@ -151,15 +185,15 @@ elif st.session_state.game_state == "gamehub":
         if not done:
             if st.button("ГОТОВО", key=f"q_{q['id']}", use_container_width=True):
                 player.complete_quest(q["id"])
-                save_and_sync()
+                save_to_database()
                 st.rerun()
         st.markdown("<div style='margin-bottom: 15px;'></div>", unsafe_allow_html=True)
 
 # ==========================================
-# 🛍️ ЭКРАН 3: МАГАЗИН ОДЕЖДЫ
+# ЭКРАН 3: МАГАЗИН ОДЕЖДЫ
 # ==========================================
 elif st.session_state.game_state == "shop":
-    st.markdown("<h2 style='text-align: center; color: #F1C40F;'>🛍️ МАГАЗИН ОДЕЖДЫ</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='text-align: center; color: #F1C40F;'>🛍️ МАГАЗИН</h2>", unsafe_allow_html=True)
     st.metric(label="ВАШЕ ЗОЛОТО", value=f"{player.gold} 🪙")
     
     if st.button("⬅️ НАЗАД В ИГРУ", use_container_width=True):
@@ -185,7 +219,7 @@ elif st.session_state.game_state == "shop":
         else:
             btn_txt = "НАДЕТЬ" if has_item else f"КУПИТЬ {player.shop_prices[name]}G"
             if st.button(btn_txt, key=f"sh_{idx}", type="primary", use_container_width=True):
-                player.buy_item(name, idx)
-                save_and_sync()
-                st.rerun()
-        st.markdown("<div style='margin-bottom: 15px;'></div>", unsafe_allow_html=True)
+            player.buy_item(name, idx)
+            save_to_database()
+            st.rerun()
+            st.markdown("", unsafe_allow_html=True)
