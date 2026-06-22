@@ -7,7 +7,7 @@ from hero import Hero
 
 # --- НАСТРОЙКА БАЗЫ ДАННЫХ SUPABASE ---
 SUPABASE_URL = "https://supabase.co"
-SUPABASE_KEY = "ВСТАВЬ_СЮДА_СКОПИРОВАННЫЙ_КЛЮЧ"
+SUPABASE_KEY = "sb_publishable_lhFtEl3aWOxrovhgVjYqYA_L2Sx5DEW"
 
 # Инициализируем подключение к базе данных
 @st.cache_resource
