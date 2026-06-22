@@ -219,7 +219,7 @@ elif st.session_state.game_state == "shop":
         else:
             btn_txt = "НАДЕТЬ" if has_item else f"КУПИТЬ {player.shop_prices[name]}G"
             if st.button(btn_txt, key=f"sh_{idx}", type="primary", use_container_width=True):
-            player.buy_item(name, idx)
-            save_to_database()
-            st.rerun()
-            st.markdown("", unsafe_allow_html=True)
+                player.buy_item(name, idx)
+                save_to_database()
+                st.rerun()
+                st.markdown("", unsafe_allow_html=True)
