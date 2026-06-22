@@ -47,7 +47,7 @@ if "user_name" not in st.session_state:
             player = Hero()
             player.name = username
             
-            if response.data:
+            if isinstance(response.data, list) and len(response.data) > 0:
                 # Если игрок найден, загружаем его данные из базы
                 db_data = response.data[0]
                 player.level = db_data.get("level", 1)
